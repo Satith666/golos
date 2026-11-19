@@ -69,6 +69,14 @@ def signature_unsigned():
     fake.write_bytes(b"MZ not really a program")
     valid, subject = cable.check_signature(fake)
     assert not valid, subject
+    # тот же сбой, что был на сервере: PSModulePath от PowerShell 7 не должен ломать проверку
+    os.environ["PSModulePath"] = r"C:\Program Files\PowerShell\7\Modules"
+    try:
+        valid2, _ = cable.check_signature(fake)
+        valid3, subject3 = cable.check_signature(Path(os.environ["SystemRoot"]) / "explorer.exe")
+    finally:
+        os.environ.pop("PSModulePath", None)
+    assert not valid2 and valid3, (valid2, valid3, subject3)
     return "неподписанный файл отклонён"
 
 

@@ -102,23 +102,38 @@ def download(url: str, target: Path, progress: Callable[[int, int], None]) -> No
 
 
 def check_signature(path: Path) -> tuple[bool, str]:
-    """Проверка подписи средствами Windows. Возвращает (подпись действительна, владелец)."""
+    """Проверка подписи средствами Windows. Возвращает (подпись действительна, владелец).
+
+    Любой сбой проверки считается отказом: подпись признаётся только при явном ответе «Valid».
+    """
     script = (
+        "$ErrorActionPreference='Stop';"
         "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+        "try{"
+        "Import-Module Microsoft.PowerShell.Security;"
         "$s=Get-AuthenticodeSignature -LiteralPath $env:GOLOS_CHECK_FILE;"
-        "$o=@{status=[int]$s.Status;subject=''};"
-        "if($s.SignerCertificate){$o.subject=$s.SignerCertificate.Subject};"
+        "$o=@{status=[string]$s.Status;subject=''};"
+        "if($s.SignerCertificate){$o.subject=[string]$s.SignerCertificate.Subject}"
+        "}catch{$o=@{status='Error';subject='';error=[string]$_.Exception.Message}};"
         "$o|ConvertTo-Json -Compress"
     )
     shell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    env = dict(os.environ, GOLOS_CHECK_FILE=str(path))
+    # PSModulePath от PowerShell 7 мешает Windows PowerShell загрузить модуль проверки подписи
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    env["GOLOS_CHECK_FILE"] = str(path)
     result = subprocess.run(
         [str(shell), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
         capture_output=True, timeout=90, env=env, creationflags=CREATE_NO_WINDOW,
     )
     text = result.stdout.decode("utf-8", errors="replace").strip()
-    data = json.loads(text[text.find("{"):]) if "{" in text else {}
-    return data.get("status") == 0, str(data.get("subject") or "")
+    try:
+        data = json.loads(text[text.find("{"):text.rfind("}") + 1])
+    except ValueError:
+        raise OSError(f"непонятный ответ проверки подписи: {text[:200]!r}") from None
+    status = str(data.get("status") or "")
+    if status == "Error" or not status:
+        raise OSError(data.get("error") or "проверка подписи не вернула результат")
+    return status == "Valid", str(data.get("subject") or "")
 
 
 def run_installer(setup: Path) -> int:
