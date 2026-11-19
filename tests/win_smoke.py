@@ -107,6 +107,10 @@ lines = []
 for name, ok, detail in results:
     lines.append(f"{'OK  ' if ok else 'FAIL'} {name}: {detail}")
 text = "\n".join(lines)
-print(text)
 Path("win-smoke.txt").write_text(text + "\n", encoding="utf-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+print(text)
 sys.exit(0 if all(ok for _, ok, _ in results) else 1)
