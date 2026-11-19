@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.build/
+build/
+dist/
+Golos.exe
+Golos.spec
+selftest.txt
+win-smoke.txt
+test-log.txt

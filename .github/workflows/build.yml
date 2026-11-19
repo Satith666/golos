@@ -1,0 +1,80 @@
+name: Сборка Golos
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Тесты
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy scipy
+      - name: Обработка голоса, звук, установка VB-CABLE
+        run: |
+          set -eo pipefail
+          for t in test_dsp test_engine test_threads test_app test_cable test_com; do
+            echo "::group::$t"
+            timeout 300 python tests/$t.py 2>&1 | tee -a test-log.txt
+            echo "::endgroup::"
+          done
+
+  windows:
+    name: Сборка Golos.exe
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Библиотеки
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: Сборка
+        run: python -m PyInstaller --noconfirm --clean --log-level WARN --onefile --windowed --name Golos --icon icon.ico --add-data "ui.html;." --collect-all _sounddevice_data --hidden-import pystray._win32 app.py
+      - name: Самопроверка собранной программы
+        shell: pwsh
+        run: |
+          Start-Process -FilePath dist\Golos.exe -ArgumentList "--selftest" -WorkingDirectory dist -Wait
+          Get-Content dist\selftest.txt -Encoding utf8
+          if (-not (Select-String -Path dist\selftest.txt -Pattern "RESULT: OK" -Quiet)) { exit 1 }
+      - name: Проверки на настоящей Windows
+        shell: pwsh
+        run: |
+          Set-Service audiosrv -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service audiosrv -ErrorAction SilentlyContinue
+          python tests/win_smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: golos-windows
+          path: |
+            dist/Golos.exe
+            dist/selftest.txt
+            win-smoke.txt
+      - name: Релиз
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(python -c "import re;print(re.search(r'VERSION = \"([^\"]+)\"', open('app.py', encoding='utf-8').read()).group(1))")
+          TAG="v$VER"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/Golos.exe --clobber
+          else
+            gh release create "$TAG" dist/Golos.exe --title "Golos $VER" --notes-file RELEASE_NOTES.md --target "$GITHUB_SHA"
+          fi

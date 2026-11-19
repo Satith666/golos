@@ -1,0 +1,26 @@
+const { chromium } = require('playwright');
+const fs = require('fs');
+(async () => {
+  const url = fs.readFileSync(process.argv[2], 'utf8').trim();
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 1060, height: 740 }, deviceScaleFactor: 2 });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(url).origin });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', e => errors.push(e.message));
+  await p.goto(url); await p.waitForSelector('.spot', { state: 'attached' }); await p.waitForTimeout(500);
+  await p.click('#tabConnect'); await p.click('#monitorOn'); await p.waitForTimeout(900);
+  const notes = await p.locator('.notice.bad').allTextContents();
+  console.log('плашки:', notes);
+  console.log('индикатор голоса идёт:', parseFloat(await p.evaluate(() => document.getElementById('mIn2').style.width)) > 0, '|', await p.textContent('#latency'));
+  await p.screenshot({ path: 'shots/error.png' });
+  await p.click('.notice.bad button'); await p.waitForTimeout(600);
+  console.log('кнопка:', await p.textContent('.notice.bad button'));
+  const clip = await p.evaluate(() => navigator.clipboard.readText());
+  console.log('в буфере строк:', clip.split('\n').length, '| первая:', clip.split('\n')[0].slice(0, 60));
+  console.log('есть попытки:', clip.includes('Неудачные попытки (monitor)'), 'есть журнал:', clip.includes('Конец журнала'));
+  await p.click('#monitorOn'); await p.waitForTimeout(900);
+  console.log('после выключения «Слышать себя» плашек:', await p.locator('.notice.bad').count());
+  console.log('ошибки страницы:', errors);
+  await b.close();
+})().catch(e => { console.error(e); process.exit(1); });
